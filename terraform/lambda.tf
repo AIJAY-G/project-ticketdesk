@@ -119,6 +119,8 @@ resource "aws_lambda_function" "attachment_processor" {
     }
   }
 
+  depends_on = [aws_cloudwatch_log_group.lambda_log_group]
+
   tags = {
     Name        = "${var.project_name}-${var.environment}-attachment-processor"
     Purpose     = "TicketDesk S3 Attachment Processing"
