@@ -135,6 +135,11 @@ def log_activity(db: Session, ticket_id: int, actor: str, action: str):
 def serve_frontend():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/health")
+def health_check():
+    """Health check endpoint for reverse proxies (Nginx / ALB)."""
+    return {"status": "healthy", "service": "ticketdesk"}
+
 @app.post("/api/login")
 def login(creds: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == creds.username.strip()).first()
