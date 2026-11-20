@@ -19,6 +19,9 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".pdf", ".txt", ".log", ".docx"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB in bytes
 PRESIGNED_URL_EXPIRATION = 900     # 15 minutes in seconds
 
+# S3 Object Key Configuration (Matches Lambda event notification filter prefix)
+S3_ATTACHMENT_PREFIX = "attachments/"
+
 
 def get_s3_bucket() -> str | None:
     """Returns the configured S3 bucket name from environment, or None if unset."""
@@ -43,6 +46,18 @@ def get_s3_client():
     Never hardcode AWS credentials in code or repository files.
     """
     return boto3.client("s3", region_name=get_aws_region())
+
+
+def format_s3_key(filename_or_key: str) -> str:
+    """
+    Constructs a canonical S3 object key matching the Lambda notification
+    filter prefix 'attachments/'.
+    Guarantees the key format: 'attachments/<UUID>_<sanitized_filename>'
+    """
+    clean_name = filename_or_key.strip().lstrip("/")
+    if clean_name.startswith(S3_ATTACHMENT_PREFIX):
+        return clean_name
+    return f"{S3_ATTACHMENT_PREFIX}{clean_name}"
 
 
 def sanitize_filename(filename: str) -> tuple[str, str]:
@@ -105,11 +120,12 @@ def save_attachment(file: UploadFile) -> tuple[str | None, str | None]:
     """
     Validates and stores an uploaded file.
     - If S3 is configured: uploads to S3 under 'attachments/<unique_filename>'
+      matching the Lambda s3:ObjectCreated trigger prefix filter.
     - If S3 is not configured: saves locally to 'app/uploads/<unique_filename>'
 
     Returns:
         (attachment_reference, local_saved_path_or_none)
-        - attachment_reference: String to store in Ticket.attachment (e.g. S3 key or local filename)
+        - attachment_reference: String to store in Ticket.attachment (e.g. 'attachments/...' or local filename)
         - local_saved_path: Full path on disk if saved locally, or None if saved to S3
     """
     if not file or not file.filename:
@@ -124,7 +140,7 @@ def save_attachment(file: UploadFile) -> tuple[str | None, str | None]:
     # Step 3: Store in Amazon S3 if configured
     if is_s3_enabled():
         bucket = get_s3_bucket()
-        s3_key = f"attachments/{unique_filename}"
+        s3_key = format_s3_key(unique_filename)
         s3 = get_s3_client()
         try:
             extra_args = {}
@@ -136,6 +152,7 @@ def save_attachment(file: UploadFile) -> tuple[str | None, str | None]:
                 s3_key,
                 ExtraArgs=extra_args if extra_args else None,
             )
+            logger.info("Successfully uploaded attachment to s3://%s/%s", bucket, s3_key)
             return s3_key, None
         except ClientError as e:
             logger.error("S3 upload failed for bucket %s, key %s: %s", bucket, s3_key, e)
@@ -198,9 +215,9 @@ def get_attachment_download_target(attachment_ref: str) -> dict | None:
                 logger.error("Failed to generate presigned URL for legacy S3 URI %s: %s", ref, e)
                 raise HTTPException(status_code=500, detail="Failed to generate secure download link.")
 
-    # Case 2: New S3 object key format ("attachments/...")
+    # Case 2: Canonical S3 object key with 'attachments/' prefix
     bucket = get_s3_bucket()
-    if ref.startswith("attachments/") and bucket:
+    if ref.startswith(S3_ATTACHMENT_PREFIX) and bucket:
         try:
             s3 = get_s3_client()
             url = s3.generate_presigned_url(
@@ -228,17 +245,19 @@ def get_attachment_download_target(attachment_ref: str) -> dict | None:
             "filename": clean_filename,
         }
 
-    # Case 4: If not found on local disk, but S3 is enabled and ref might be an S3 key without prefix
+    # Case 4: Backward compatibility - S3 is enabled and ref is an S3 key without 'attachments/' prefix
+    # Normalizes to 'attachments/<ref>' or generates URL for fallback key
     if bucket:
+        s3_key = format_s3_key(ref)
         try:
             s3 = get_s3_client()
             url = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": ref},
+                Params={"Bucket": bucket, "Key": s3_key},
                 ExpiresIn=PRESIGNED_URL_EXPIRATION,
             )
-            return {"type": "s3_presigned", "url": url, "filename": os.path.basename(ref)}
+            return {"type": "s3_presigned", "url": url, "filename": os.path.basename(s3_key)}
         except Exception as e:
-            logger.error("Failed to generate presigned URL for fallback S3 key %s: %s", ref, e)
+            logger.error("Failed to generate presigned URL for fallback S3 key %s: %s", s3_key, e)
 
     return None

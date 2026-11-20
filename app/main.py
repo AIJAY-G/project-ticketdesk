@@ -260,6 +260,7 @@ def create_ticket(
 @app.get("/api/tickets/{ticket_id}/attachment")
 def download_ticket_attachment(
     ticket_id: int,
+    redirect: bool = True,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -267,7 +268,7 @@ def download_ticket_attachment(
     Authenticated attachment retrieval endpoint.
     - Admins and Support Engineers can access any ticket's attachment.
     - Regular Users can only access attachments belonging to tickets they created.
-    - Redirects to a 15-minute S3 pre-signed URL for cloud attachments.
+    - Redirects to a 15-minute S3 pre-signed URL for cloud attachments (or returns JSON if redirect=False).
     - Safely returns a FileResponse for local file attachments.
     """
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
@@ -286,6 +287,8 @@ def download_ticket_attachment(
         raise HTTPException(status_code=404, detail="Attachment file not found")
 
     if target["type"] == "s3_presigned":
+        if not redirect:
+            return {"download_url": target["url"], "filename": target["filename"], "expires_in": 900}
         # Redirect client directly to the secure 15-minute S3 pre-signed URL
         return RedirectResponse(url=target["url"], status_code=307)
     elif target["type"] == "local_file":
