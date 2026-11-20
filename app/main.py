@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header
@@ -15,6 +16,8 @@ from security import (
     create_access_token,
     verify_access_token,
 )
+
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -38,7 +41,14 @@ VALID_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
 VALID_CATEGORIES = ["Hardware", "Software", "Network", "Email", "Account Access"]
 VALID_ROLES = ["Admin", "Support Engineer", "User"]
 
-ALLOW_DEV_HEADER_AUTH = os.getenv("ALLOW_DEV_HEADER_AUTH", "true").lower() in ("true", "1", "yes")
+# SEC-01: Insecure dev header authentication is strictly disabled by default.
+# It can only be enabled in isolated dev/testing environments by explicitly setting ALLOW_DEV_HEADER_AUTH=true.
+ALLOW_DEV_HEADER_AUTH = os.getenv("ALLOW_DEV_HEADER_AUTH", "false").lower() in ("true", "1", "yes")
+if ALLOW_DEV_HEADER_AUTH:
+    logger.warning(
+        "SECURITY WARNING: ALLOW_DEV_HEADER_AUTH is enabled. "
+        "Insecure X-Username header authentication is active. Do NOT use this in production!"
+    )
 
 # Seed default accounts if database is empty and upgrade existing plaintext passwords
 def seed_users():

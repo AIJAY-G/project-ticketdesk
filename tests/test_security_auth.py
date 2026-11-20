@@ -144,17 +144,23 @@ class TestSecurityAndAuth(unittest.TestCase):
 
     def test_09_unauthenticated_request_rejected(self):
         """Verify requests without token return HTTP 401."""
-        with patch.object(main, "ALLOW_DEV_HEADER_AUTH", False):
-            with self.assertRaises(HTTPException) as ctx:
-                main.get_current_user(authorization=None, x_username=None, db=self.db)
-            self.assertEqual(ctx.exception.status_code, 401)
+        with self.assertRaises(HTTPException) as ctx:
+            main.get_current_user(authorization=None, x_username=None, db=self.db)
+        self.assertEqual(ctx.exception.status_code, 401)
 
-    def test_10_header_spoofing_blocked_in_production_mode(self):
-        """Verify X-Username header spoofing is rejected when ALLOW_DEV_HEADER_AUTH=False."""
-        with patch.object(main, "ALLOW_DEV_HEADER_AUTH", False):
-            with self.assertRaises(HTTPException) as ctx:
-                main.get_current_user(authorization=None, x_username="sec_admin", db=self.db)
-            self.assertEqual(ctx.exception.status_code, 401)
+    def test_10_header_spoofing_blocked_by_default(self):
+        """Verify X-Username header spoofing is rejected by default (ALLOW_DEV_HEADER_AUTH defaults to False)."""
+        self.assertFalse(main.ALLOW_DEV_HEADER_AUTH)
+        with self.assertRaises(HTTPException) as ctx:
+            main.get_current_user(authorization=None, x_username="sec_admin", db=self.db)
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_10b_header_auth_allowed_only_when_explicitly_configured(self):
+        """Verify X-Username header authentication is only active when ALLOW_DEV_HEADER_AUTH is explicitly set to True."""
+        with patch.object(main, "ALLOW_DEV_HEADER_AUTH", True):
+            user = main.get_current_user(authorization=None, x_username="sec_admin", db=self.db)
+            self.assertEqual(user.username, "sec_admin")
+            self.assertEqual(user.role, "Admin")
 
     def test_11_valid_bearer_token_authenticates(self):
         """Verify valid Bearer token successfully resolves the user."""
@@ -244,11 +250,10 @@ class TestSecurityAndAuth(unittest.TestCase):
     # --------------------------------------------------------------------------
     def test_15_legacy_uploads_requires_auth_and_rbac(self):
         """Verify legacy /uploads/{filename} endpoint enforces authentication and RBAC."""
-        # Unauthenticated call to get_current_user fails
-        with patch.object(main, "ALLOW_DEV_HEADER_AUTH", False):
-            with self.assertRaises(HTTPException) as ctx:
-                main.get_current_user(authorization=None, x_username=None, db=self.db)
-            self.assertEqual(ctx.exception.status_code, 401)
+        # Unauthenticated call to get_current_user fails by default
+        with self.assertRaises(HTTPException) as ctx:
+            main.get_current_user(authorization=None, x_username=None, db=self.db)
+        self.assertEqual(ctx.exception.status_code, 401)
 
         # Unauthorized user downloading a file associated with another user's ticket: blocked
         t1 = Ticket(
@@ -278,6 +283,39 @@ class TestSecurityAndAuth(unittest.TestCase):
             connect_args["sslmode"] = "require"
 
         self.assertEqual(connect_args.get("sslmode"), "require")
+
+    # --------------------------------------------------------------------------
+    # 7. Stored XSS Mitigation Tests
+    # --------------------------------------------------------------------------
+    def test_17_stored_xss_payload_persisted_safely_and_frontend_escaping_present(self):
+        """Verify tickets with HTML/XSS payloads store accurately and frontend implements escapeHtml."""
+        xss_title = "<script>alert('xss-title')</script>"
+        xss_desc = "<img src=x onerror=alert('xss-desc')>"
+        ticket = Ticket(
+            title=xss_title,
+            description=xss_desc,
+            category="Software",
+            priority="High",
+            created_by="sec_user1",
+        )
+        self.db.add(ticket)
+        self.db.commit()
+
+        details = main.get_ticket_details(ticket_id=ticket.id, current_user=self.admin, db=self.db)
+        self.assertEqual(details["title"], xss_title)
+        self.assertEqual(details["description"], xss_desc)
+
+        # Inspect frontend index.html to verify escapeHtml function exists and is applied
+        index_path = os.path.join(main.STATIC_DIR, "index.html")
+        with open(index_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        self.assertIn("function escapeHtml(", html_content)
+        self.assertIn("escapeHtml(t.title)", html_content)
+        self.assertIn("escapeHtml(t.description)", html_content)
+        self.assertIn("escapeHtml(t.created_by)", html_content)
+        self.assertIn("escapeHtml(a.actor)", html_content)
+        self.assertIn("escapeHtml(a.action)", html_content)
 
 
 if __name__ == "__main__":

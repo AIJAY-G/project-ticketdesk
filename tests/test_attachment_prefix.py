@@ -205,16 +205,39 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         self.assertTrue(os.path.exists(local_path))
 
     def test_11_legacy_local_attachment_intact(self):
-        """Verify existing legacy attachment 'VPC not working.png' resolves to local disk."""
+        """
+        Verify local disk attachment resolution operates deterministically
+        without depending on untracked legacy files in a fresh clone.
+        """
         os.environ.pop("S3_BUCKET_NAME", None)
-        target = storage.get_attachment_download_target("VPC not working.png")
+
+        # Create an isolated temporary test fixture inside UPLOAD_DIR
+        fixture_name = "test_legacy_fixture.png"
+        fixture_path = os.path.join(storage.UPLOAD_DIR, fixture_name)
+        os.makedirs(storage.UPLOAD_DIR, exist_ok=True)
+        fixture_data = b"MOCK_PNG_LEGACY_ATTACHMENT_DATA_FOR_TESTING"
+        with open(fixture_path, "wb") as f:
+            f.write(fixture_data)
+        self.test_files_to_clean.append(fixture_path)
+
+        target = storage.get_attachment_download_target(fixture_name)
 
         self.assertIsNotNone(target)
         assert target is not None
         self.assertEqual(target["type"], "local_file")
-        self.assertEqual(target["filename"], "VPC not working.png")
+        self.assertEqual(target["filename"], fixture_name)
         self.assertTrue(os.path.exists(target["path"]))
-        self.assertEqual(os.path.getsize(target["path"]), 7579998)
+        self.assertEqual(os.path.getsize(target["path"]), len(fixture_data))
+
+        # If the original untracked legacy attachment happens to exist locally, verify it too without modifying it
+        orig_legacy_path = os.path.join(storage.UPLOAD_DIR, "VPC not working.png")
+        if os.path.exists(orig_legacy_path):
+            orig_target = storage.get_attachment_download_target("VPC not working.png")
+            self.assertIsNotNone(orig_target)
+            assert orig_target is not None
+            self.assertEqual(orig_target["type"], "local_file")
+            self.assertEqual(orig_target["filename"], "VPC not working.png")
+            self.assertTrue(os.path.exists(orig_target["path"]))
 
     # --------------------------------------------------------------------------
     # 5. Security & Validation Rules Retention Tests
