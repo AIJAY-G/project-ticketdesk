@@ -15,15 +15,15 @@ resource "aws_security_group" "ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Inbound Application Port (port 8000) for FastAPI direct access
+  # Inbound Application Port (port 8000) strictly restricted to internal security group (no public ingress)
   dynamic "ingress" {
     for_each = var.app_port != var.http_port ? [var.app_port] : []
     content {
-      description = "Allow inbound FastAPI application traffic"
+      description = "Allow internal FastAPI application traffic within EC2 security group"
       from_port   = ingress.value
       to_port     = ingress.value
       protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
+      self        = true
     }
   }
 

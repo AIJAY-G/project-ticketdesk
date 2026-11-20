@@ -42,10 +42,11 @@ resource "aws_db_instance" "postgres" {
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = false # Strictly private, no public IP, no internet routing
 
-  # Availability & Durability (Cost-minimized for internship PoC)
-  multi_az            = false # Single-AZ to avoid doubling hourly database cost
-  skip_final_snapshot = true  # Enables clean teardown with terraform destroy
-  deletion_protection = false # Allows clean teardown for internship PoC
+  # Availability, Durability & Deletion Safety
+  multi_az                  = false # Single-AZ to avoid doubling hourly database cost
+  deletion_protection       = true  # Prevents accidental deletion of the database instance
+  skip_final_snapshot       = false # Mandates a final snapshot before database deletion
+  final_snapshot_identifier = "${var.project_name}-${var.environment}-postgres-final-snapshot"
 
   # Maintenance & Automated Backups
   auto_minor_version_upgrade = true
