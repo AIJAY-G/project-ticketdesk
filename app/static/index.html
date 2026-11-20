@@ -1094,7 +1094,8 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="attachment">Attachment (Optional)</label>
-            <input id="attachment" type="file" style="padding: 6px 10px;" />
+            <input id="attachment" type="file" accept=".png,.jpg,.jpeg,.pdf,.txt,.log,.docx" style="padding: 6px 10px;" />
+            <span style="font-size:11px; color:var(--text-tertiary); display:block; margin-top:4px;">Allowed: PNG, JPG, PDF, TXT, LOG, DOCX (Max 10 MB)</span>
           </div>
         </div>
         <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;">
@@ -1452,7 +1453,10 @@
           <tr>
             <td><span class="ticket-id">#${t.id}</span></td>
             <td>
-              <span class="ticket-title">${t.title}</span>
+              <span class="ticket-title">
+                ${t.title}
+                ${t.attachment ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6; margin-left:4px; vertical-align:middle;" title="Has attachment"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>` : ""}
+              </span>
               <span class="muted" style="font-size:12px;">by ${t.created_by}</span>
             </td>
             <td><span class="cat-badge">${t.category}</span></td>
@@ -1477,20 +1481,69 @@
       }).join("");
     }
 
+    function getCleanAttachmentName(ref) {
+      if (!ref) return "";
+      let name = ref.replace(/^s3:\/\/[^\/]+\//, "");
+      name = name.replace(/^attachments\//, "");
+      name = name.replace(/^[a-f0-9]{8,16}_/, "");
+      return name || "attachment";
+    }
+
+    async function downloadAttachment(ticketId, fallbackFilename = "attachment") {
+      try {
+        showToast("Fetching attachment...");
+        const res = await fetch(`/api/tickets/${ticketId}/attachment`, {
+          headers: authHeaders()
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: "Attachment is unavailable" }));
+          showToast(err.detail || "Attachment download failed", true);
+          return;
+        }
+
+        const blob = await res.blob();
+        const disposition = res.headers.get("Content-Disposition");
+        let filename = fallbackFilename;
+        if (disposition && disposition.includes("filename=")) {
+          const match = disposition.match(/filename=["']?([^"';]+)["']?/);
+          if (match && match[1]) filename = match[1].trim();
+        }
+
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+        showToast("Download started");
+      } catch (err) {
+        showToast("Download error: " + err.message, true);
+      }
+    }
+
     async function viewDetails(id) {
       const res = await fetch(`/api/tickets/${id}`, { headers: authHeaders() });
       const t = await res.json();
 
+      const cleanName = getCleanAttachmentName(t.attachment);
       const attachHtml = t.attachment
-        ? (t.attachment.startsWith("s3://")
-            ? `<span style="font-family:'JetBrains Mono', monospace; font-size:12px;">${t.attachment}</span>`
-            : `<a href="/uploads/${encodeURIComponent(t.attachment)}" target="_blank" style="color:var(--primary); font-weight:500; display:inline-flex; align-items:center; gap:5px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-                ${t.attachment}
-               </a>`)
-        : "<span class='muted'>No file attachment</span>";
+        ? `<div style="display:inline-flex; align-items:center; gap:8px;">
+             <button type="button" 
+                     onclick="downloadAttachment(${t.id}, '${cleanName.replace(/'/g, "\\'")}')" 
+                     class="btn-sm" 
+                     style="background:var(--primary-subtle); color:var(--primary-text); border:1px solid var(--primary-border); display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-weight:600; padding:6px 12px; border-radius:var(--radius-sm);"
+                     title="Download ${cleanName}">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                 <polyline points="7 10 12 15 17 10"/>
+                 <line x1="12" y1="15" x2="12" y2="3"/>
+               </svg>
+               Download ${cleanName}
+             </button>
+           </div>`
+        : "<span class='muted' style='font-size:13px;'>No file attachment</span>";
 
       const historyHtml = t.activities.length
         ? `<div class="timeline">${t.activities.map(a => `
@@ -1553,7 +1606,8 @@
         switchMainView("tickets");
         loadData();
       } else {
-        showToast("Failed to create ticket", true);
+        const err = await res.json().catch(() => ({ detail: "Failed to create ticket" }));
+        showToast(err.detail || "Failed to create ticket", true);
       }
     }
 

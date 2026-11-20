@@ -1,23 +1,21 @@
 import os
-import shutil
 from datetime import datetime, timedelta
-import boto3
+from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database import Base, engine, get_db, SessionLocal
 from models import User, Ticket, TicketActivity
+from storage import save_attachment, get_attachment_download_target, UPLOAD_DIR
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Project TicketDesk")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 VALID_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
@@ -214,35 +212,86 @@ def create_ticket(
     if category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail="Invalid category")
 
+    # Step 1: Validate and save attachment using storage helper
     attachment_ref = None
+    local_saved_path = None
     if file and file.filename:
-        s3_bucket = os.getenv("S3_BUCKET_NAME")
-        if s3_bucket:
-            s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION", "ap-south-1"))
-            s3.upload_fileobj(file.file, s3_bucket, file.filename)
-            attachment_ref = f"s3://{s3_bucket}/{file.filename}"
-        else:
-            file_path = os.path.join(UPLOAD_DIR, file.filename)
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            attachment_ref = file.filename
+        attachment_ref, local_saved_path = save_attachment(file)
 
-    ticket = Ticket(
-        title=title,
-        description=description,
-        category=category,
-        priority=priority,
-        status="Open",
-        attachment=attachment_ref,
-        created_by=current_user.username,
-    )
-    db.add(ticket)
-    db.commit()
-    db.refresh(ticket)
+    # Step 2: Store ticket record in database with rollback and file cleanup safety
+    try:
+        ticket = Ticket(
+            title=title,
+            description=description,
+            category=category,
+            priority=priority,
+            status="Open",
+            attachment=attachment_ref,
+            created_by=current_user.username,
+        )
+        db.add(ticket)
+        db.commit()
+        db.refresh(ticket)
 
-    log_activity(db, ticket.id, current_user.username, f"Created ticket ({category} | {priority} priority)")
-    db.commit()
-    return ticket
+        log_activity(db, ticket.id, current_user.username, f"Created ticket ({category} | {priority} priority)")
+        db.commit()
+        return {
+            "id": ticket.id,
+            "title": ticket.title,
+            "description": ticket.description,
+            "category": ticket.category,
+            "priority": ticket.priority,
+            "status": ticket.status,
+            "attachment": ticket.attachment,
+            "created_by": ticket.created_by,
+            "assigned_to": ticket.assigned_to,
+            "created_at": ticket.created_at,
+        }
+    except Exception:
+        db.rollback()
+        # Clean up orphaned local file if database transaction failed
+        if local_saved_path and os.path.exists(local_saved_path):
+            try:
+                os.remove(local_saved_path)
+            except Exception:
+                pass
+        raise
+
+@app.get("/api/tickets/{ticket_id}/attachment")
+def download_ticket_attachment(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Authenticated attachment retrieval endpoint.
+    - Admins and Support Engineers can access any ticket's attachment.
+    - Regular Users can only access attachments belonging to tickets they created.
+    - Redirects to a 15-minute S3 pre-signed URL for cloud attachments.
+    - Safely returns a FileResponse for local file attachments.
+    """
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    # Enforce Role-Based Access Control
+    if current_user.role == "User" and ticket.created_by != current_user.username:
+        raise HTTPException(status_code=403, detail="You do not have permission to access this attachment")
+
+    if not ticket.attachment:
+        raise HTTPException(status_code=404, detail="This ticket has no attachment")
+
+    target = get_attachment_download_target(ticket.attachment)
+    if not target:
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+
+    if target["type"] == "s3_presigned":
+        # Redirect client directly to the secure 15-minute S3 pre-signed URL
+        return RedirectResponse(url=target["url"], status_code=307)
+    elif target["type"] == "local_file":
+        return FileResponse(target["path"], filename=target["filename"])
+    else:
+        raise HTTPException(status_code=404, detail="Attachment cannot be accessed")
 
 @app.patch("/api/tickets/{ticket_id}/status")
 def update_status(
@@ -304,7 +353,11 @@ def delete_ticket(ticket_id: int, current_user: User = Depends(get_current_user)
 
 @app.get("/uploads/{filename}")
 def get_uploaded_file(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if not os.path.exists(file_path):
+    """Legacy/direct local file access with path traversal protection."""
+    safe_name = os.path.basename(filename)
+    resolved_path = Path(os.path.join(UPLOAD_DIR, safe_name)).resolve()
+    resolved_upload_dir = Path(UPLOAD_DIR).resolve()
+
+    if not resolved_path.is_relative_to(resolved_upload_dir) or not resolved_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path)
+    return FileResponse(str(resolved_path), filename=safe_name)
