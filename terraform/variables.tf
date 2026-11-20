@@ -75,3 +75,43 @@ variable "allowed_ssh_cidr" {
   }
 }
 
+# ==============================================================================
+# Database Variables (Amazon RDS PostgreSQL)
+# ==============================================================================
+variable "db_name" {
+  type        = string
+  description = "Name of the initial PostgreSQL database created on RDS."
+  default     = "ticketdesk"
+}
+
+variable "db_username" {
+  type        = string
+  description = "Master administrative username for Amazon RDS PostgreSQL."
+  default     = "ticketdesk_admin"
+}
+
+variable "db_password" {
+  type        = string
+  description = "Master administrative password for Amazon RDS PostgreSQL."
+  sensitive   = true
+}
+
+variable "db_instance_class" {
+  type        = string
+  description = "Compute and memory capacity of the RDS DB instance (Free Tier eligible: db.t3.micro or db.t4g.micro)."
+  default     = "db.t4g.micro"
+}
+
+variable "db_allocated_storage" {
+  type        = number
+  description = "Allocated storage size in gigabytes (minimum 20 GB for general-purpose SSD gp3)."
+  default     = 20
+}
+
+variable "db_engine_version" {
+  type        = string
+  description = "Major and minor engine version for Amazon RDS PostgreSQL."
+  default     = "15.7"
+}
+
+

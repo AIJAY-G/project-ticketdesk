@@ -5,7 +5,7 @@
 # 1. Copy this file to 'terraform.tfvars' in the same directory:
 #      cp terraform.tfvars.example terraform.tfvars
 # 2. Customize the values below for your specific deployment.
-# 3. IMPORTANT: 'terraform.tfvars' contains environment-specific values and must
+# 3. IMPORTANT: 'terraform.tfvars' contains sensitive values and must
 #    NEVER be committed to version control.
 # ==============================================================================
 
@@ -31,3 +31,12 @@ db_port   = 5432
 # Leave as null or commented out if SSH access is not required.
 allowed_ssh_cidr = null
 
+# ==============================================================================
+# Database Configuration (Amazon RDS PostgreSQL)
+# ==============================================================================
+db_name              = "ticketdesk"
+db_username          = "ticketdesk_admin"
+db_password          = "ProvideStrongPassword123!" # Required: Set a strong password in your local terraform.tfvars
+db_instance_class    = "db.t4g.micro"              # Free Tier eligible (or db.t3.micro)
+db_allocated_storage = 20                          # Minimum 20 GB for gp3
+db_engine_version    = "15.7"
