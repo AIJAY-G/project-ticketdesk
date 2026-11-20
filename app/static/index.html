@@ -1094,7 +1094,8 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="attachment">Attachment (Optional)</label>
-            <input id="attachment" type="file" style="padding: 6px 10px;" />
+            <input id="attachment" type="file" accept=".png,.jpg,.jpeg,.pdf,.txt,.log,.docx" style="padding: 6px 10px;" />
+            <span style="font-size:11px; color:var(--text-tertiary); display:block; margin-top:4px;">Allowed: PNG, JPG, PDF, TXT, LOG, DOCX (Max 10 MB)</span>
           </div>
         </div>
         <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;">
@@ -1187,15 +1188,34 @@
       applyTheme(localStorage.getItem("td_theme") || "light");
       const savedUser = localStorage.getItem("td_user");
       const savedRole = localStorage.getItem("td_role");
-      if (savedUser && savedRole) {
+      const savedToken = localStorage.getItem("td_token");
+      if (savedUser && savedRole && savedToken) {
         currentUser = savedUser;
         currentRole = savedRole;
         showApp();
       }
     };
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
     function authHeaders(extra = {}) {
-      return { "X-Username": currentUser, ...extra };
+      const token = localStorage.getItem("td_token");
+      const headers = { ...extra };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (currentUser) {
+        headers["X-Username"] = currentUser;
+      }
+      return headers;
     }
 
     function showToast(msg, isError = false) {
@@ -1256,6 +1276,7 @@
     function logout() {
       localStorage.removeItem("td_user");
       localStorage.removeItem("td_role");
+      localStorage.removeItem("td_token");
       location.reload();
     }
 
@@ -1272,6 +1293,9 @@
         const data = await res.json();
         currentUser = data.username;
         currentRole = data.role;
+        if (data.access_token) {
+          localStorage.setItem("td_token", data.access_token);
+        }
         localStorage.setItem("td_user", currentUser);
         localStorage.setItem("td_role", currentRole);
         showApp();
@@ -1307,6 +1331,9 @@
         const data = await res.json();
         currentUser = data.username;
         currentRole = data.role;
+        if (data.access_token) {
+          localStorage.setItem("td_token", data.access_token);
+        }
         localStorage.setItem("td_user", currentUser);
         localStorage.setItem("td_role", currentRole);
         showApp();
@@ -1318,29 +1345,36 @@
     }
 
     async function loadData() {
-      const [dashRes, ticketsRes, usersRes] = await Promise.all([
+      const fetchUsers = (currentRole === "Admin" || currentRole === "Support Engineer")
+        ? fetch("/api/users", { headers: authHeaders() }).then(r => r.ok ? r.json() : [])
+        : Promise.resolve([]);
+
+      const [dashRes, ticketsRes, users] = await Promise.all([
         fetch("/api/dashboard", { headers: authHeaders() }),
         fetch("/api/tickets", { headers: authHeaders() }),
-        fetch("/api/users", { headers: authHeaders() })
+        fetchUsers
       ]);
       const dash = await dashRes.json();
       allTickets = await ticketsRes.json();
-      allUsers = await usersRes.json();
+      allUsers = users;
 
       const activeStatus = document.getElementById("statusFilter").value;
       document.getElementById("dashboardStatus").innerHTML = Object.entries(dash.status_counts)
         .map(([k, v]) => {
           const filterVal = k === "Total" ? "All" : k;
           const isActive = (activeStatus === filterVal) ? "active" : "";
+          const safeKey = escapeHtml(k);
+          const safeVal = escapeHtml(v);
+          const safeFilterVal = escapeHtml(filterVal);
           return `
-            <div class="stat-card ${isActive}" onclick="setStatusFilter('${filterVal}')">
+            <div class="stat-card ${isActive}" onclick="setStatusFilter('${safeFilterVal}')">
               <div class="stat-label">
-                ${k}
+                ${safeKey}
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6;">
                   <polyline points="9 18 15 12 9 6"/>
                 </svg>
               </div>
-              <div class="stat-value">${v}</div>
+              <div class="stat-value">${safeVal}</div>
             </div>
           `;
         }).join("");
@@ -1444,25 +1478,28 @@
         const assignCell = currentRole === "Admin"
           ? `<select class="table-select" onchange="assignTicket(${t.id}, this.value)">
                <option value="">Unassigned</option>
-               ${engineers.map(e => `<option value="${e.username}" ${e.username === t.assigned_to ? "selected" : ""}>${e.username}</option>`).join("")}
+               ${engineers.map(e => `<option value="${escapeHtml(e.username)}" ${e.username === t.assigned_to ? "selected" : ""}>${escapeHtml(e.username)}</option>`).join("")}
              </select>`
-          : (t.assigned_to ? `<span style="font-weight:500;">${t.assigned_to}</span>` : `<span class="muted">&mdash;</span>`);
+          : (t.assigned_to ? `<span style="font-weight:500;">${escapeHtml(t.assigned_to)}</span>` : `<span class="muted">&mdash;</span>`);
 
         return `
           <tr>
             <td><span class="ticket-id">#${t.id}</span></td>
             <td>
-              <span class="ticket-title">${t.title}</span>
-              <span class="muted" style="font-size:12px;">by ${t.created_by}</span>
+              <span class="ticket-title">
+                ${escapeHtml(t.title)}
+                ${t.attachment ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6; margin-left:4px; vertical-align:middle;" title="Has attachment"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>` : ""}
+              </span>
+              <span class="muted" style="font-size:12px;">by ${escapeHtml(t.created_by)}</span>
             </td>
-            <td><span class="cat-badge">${t.category}</span></td>
-            <td><span class="badge ${t.priority}">${t.priority}</span></td>
+            <td><span class="cat-badge">${escapeHtml(t.category)}</span></td>
+            <td><span class="badge ${escapeHtml(t.priority)}">${escapeHtml(t.priority)}</span></td>
             <td>${assignCell}</td>
             <td>
               ${currentRole === "User"
-                ? `<span class="cat-badge">${t.status}</span>`
+                ? `<span class="cat-badge">${escapeHtml(t.status)}</span>`
                 : `<select class="table-select" ${canUpdateStatus ? "" : "disabled title='Only Admin or assigned engineer can update'"} onchange="updateStatus(${t.id}, this.value)">
-                    ${statuses.map(s => `<option value="${s}" ${s === t.status ? "selected" : ""}>${s}</option>`).join("")}
+                    ${statuses.map(s => `<option value="${escapeHtml(s)}" ${s === t.status ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}
                   </select>`
               }
             </td>
@@ -1477,48 +1514,99 @@
       }).join("");
     }
 
+    function getCleanAttachmentName(ref) {
+      if (!ref) return "";
+      let name = ref.replace(/^s3:\/\/[^\/]+\//, "");
+      name = name.replace(/^attachments\//, "");
+      name = name.replace(/^[a-f0-9]{8,16}_/, "");
+      return name || "attachment";
+    }
+
+    async function downloadAttachment(ticketId, fallbackFilename = "attachment") {
+      try {
+        showToast("Fetching attachment...");
+        const res = await fetch(`/api/tickets/${ticketId}/attachment`, {
+          headers: authHeaders()
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: "Attachment is unavailable" }));
+          showToast(err.detail || "Attachment download failed", true);
+          return;
+        }
+
+        const blob = await res.blob();
+        const disposition = res.headers.get("Content-Disposition");
+        let filename = fallbackFilename;
+        if (disposition && disposition.includes("filename=")) {
+          const match = disposition.match(/filename=["']?([^"';]+)["']?/);
+          if (match && match[1]) filename = match[1].trim();
+        }
+
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+        showToast("Download started");
+      } catch (err) {
+        showToast("Download error: " + err.message, true);
+      }
+    }
+
     async function viewDetails(id) {
       const res = await fetch(`/api/tickets/${id}`, { headers: authHeaders() });
       const t = await res.json();
 
+      const cleanName = getCleanAttachmentName(t.attachment);
+      const safeCleanName = escapeHtml(cleanName);
+      const jsEscapedCleanName = cleanName.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
       const attachHtml = t.attachment
-        ? (t.attachment.startsWith("s3://")
-            ? `<span style="font-family:'JetBrains Mono', monospace; font-size:12px;">${t.attachment}</span>`
-            : `<a href="/uploads/${encodeURIComponent(t.attachment)}" target="_blank" style="color:var(--primary); font-weight:500; display:inline-flex; align-items:center; gap:5px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-                ${t.attachment}
-               </a>`)
-        : "<span class='muted'>No file attachment</span>";
+        ? `<div style="display:inline-flex; align-items:center; gap:8px;">
+             <button type="button" 
+                     onclick="downloadAttachment(${t.id}, '${jsEscapedCleanName}')" 
+                     class="btn-sm" 
+                     style="background:var(--primary-subtle); color:var(--primary-text); border:1px solid var(--primary-border); display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-weight:600; padding:6px 12px; border-radius:var(--radius-sm);"
+                     title="Download ${safeCleanName}">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                 <polyline points="7 10 12 15 17 10"/>
+                 <line x1="12" y1="15" x2="12" y2="3"/>
+               </svg>
+               Download ${safeCleanName}
+             </button>
+           </div>`
+        : "<span class='muted' style='font-size:13px;'>No file attachment</span>";
 
-      const historyHtml = t.activities.length
+      const historyHtml = (t.activities && t.activities.length)
         ? `<div class="timeline">${t.activities.map(a => `
             <div class="activity-item">
-              <div><strong>${a.actor}</strong> &mdash; ${a.action}</div>
-              <span class="activity-time">${new Date(a.timestamp + "Z").toLocaleString()}</span>
+              <div><strong>${escapeHtml(a.actor)}</strong> &mdash; ${escapeHtml(a.action)}</div>
+              <span class="activity-time">${escapeHtml(new Date(a.timestamp + "Z").toLocaleString())}</span>
             </div>
           `).join("")}</div>`
         : "<p class='muted' style='font-size:13px;'>No audit trail activity recorded yet.</p>";
 
       document.getElementById("modalTitle").innerHTML = `
         <span class="ticket-id" style="margin-right:6px;">#${t.id}</span>
-        ${t.title}
+        ${escapeHtml(t.title)}
       `;
       document.getElementById("modalBody").innerHTML = `
         <div class="detail-grid">
-          <div class="detail-item"><strong>Status</strong> <span>${t.status}</span></div>
-          <div class="detail-item"><strong>Priority</strong> <span class="badge ${t.priority}">${t.priority}</span></div>
-          <div class="detail-item"><strong>Category</strong> <span class="cat-badge">${t.category}</span></div>
-          <div class="detail-item"><strong>Assigned To</strong> <span>${t.assigned_to || "Unassigned"}</span></div>
-          <div class="detail-item"><strong>Reporter</strong> <span>${t.created_by}</span></div>
-          <div class="detail-item"><strong>Submitted At</strong> <span style="font-size:12px; font-family:'JetBrains Mono',monospace;">${new Date(t.created_at + "Z").toLocaleString()}</span></div>
+          <div class="detail-item"><strong>Status</strong> <span>${escapeHtml(t.status)}</span></div>
+          <div class="detail-item"><strong>Priority</strong> <span class="badge ${escapeHtml(t.priority)}">${escapeHtml(t.priority)}</span></div>
+          <div class="detail-item"><strong>Category</strong> <span class="cat-badge">${escapeHtml(t.category)}</span></div>
+          <div class="detail-item"><strong>Assigned To</strong> <span>${escapeHtml(t.assigned_to || "Unassigned")}</span></div>
+          <div class="detail-item"><strong>Reporter</strong> <span>${escapeHtml(t.created_by)}</span></div>
+          <div class="detail-item"><strong>Submitted At</strong> <span style="font-size:12px; font-family:'JetBrains Mono',monospace;">${escapeHtml(new Date(t.created_at + "Z").toLocaleString())}</span></div>
           <div class="detail-item" style="grid-column: span 2;"><strong>Attachment</strong> <div>${attachHtml}</div></div>
         </div>
         <div style="margin: 16px 0 6px; font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-secondary); letter-spacing:0.4px;">
           Problem Statement
         </div>
-        <div class="desc-box">${t.description}</div>
+        <div class="desc-box">${escapeHtml(t.description)}</div>
         <div style="margin: 20px 0 6px; font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-secondary); letter-spacing:0.4px;">
           Activity &amp; Audit Log
         </div>
@@ -1553,7 +1641,8 @@
         switchMainView("tickets");
         loadData();
       } else {
-        showToast("Failed to create ticket", true);
+        const err = await res.json().catch(() => ({ detail: "Failed to create ticket" }));
+        showToast(err.detail || "Failed to create ticket", true);
       }
     }
 
