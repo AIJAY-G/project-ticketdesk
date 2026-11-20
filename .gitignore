@@ -8,6 +8,7 @@
 *.tfstate
 *.tfstate.backup
 *.tfvars
+*.zip
 
 # Python
 __pycache__/
