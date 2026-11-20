@@ -1,0 +1,33 @@
+# ==============================================================================
+# Virtusa Project TicketDesk - Terraform Variable Values Example
+# ==============================================================================
+# Instructions:
+# 1. Copy this file to 'terraform.tfvars' in the same directory:
+#      cp terraform.tfvars.example terraform.tfvars
+# 2. Customize the values below for your specific deployment.
+# 3. IMPORTANT: 'terraform.tfvars' contains environment-specific values and must
+#    NEVER be committed to version control.
+# ==============================================================================
+
+aws_region   = "ap-south-1"
+project_name = "ticketdesk"
+environment  = "poc"
+
+# VPC and Subnet Network Allocation
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidr   = "10.0.1.0/24"
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+availability_zones   = ["ap-south-1a", "ap-south-1b"]
+
+# Application and Infrastructure Ports
+http_port = 80
+app_port  = 8000
+ssh_port  = 22
+db_port   = 5432
+
+# Trusted Administrative SSH Ingress
+# Replace with your actual trusted developer/admin IP address (e.g., "203.0.113.25/32").
+# For security reasons, "0.0.0.0/0" is strictly disallowed.
+# Leave as null or commented out if SSH access is not required.
+allowed_ssh_cidr = null
+
