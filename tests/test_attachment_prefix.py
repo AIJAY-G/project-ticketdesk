@@ -88,6 +88,7 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
 
         self.assertIsNone(local_path)
         self.assertIsNotNone(s3_key)
+        assert s3_key is not None
         self.assertTrue(s3_key.startswith("attachments/"), f"Key '{s3_key}' must start with 'attachments/'")
 
         # Verify pattern: attachments/<12-hex-uuid>_vpn_error.log
@@ -111,6 +112,8 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
 
         # The Lambda filter_prefix in terraform/lambda.tf is 'attachments/'
         lambda_filter_prefix = "attachments/"
+        self.assertIsNotNone(s3_key)
+        assert s3_key is not None
         self.assertTrue(
             s3_key.startswith(lambda_filter_prefix),
             f"Object key '{s3_key}' will fail Lambda event filter '{lambda_filter_prefix}'"
@@ -132,6 +135,7 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         target = storage.get_attachment_download_target("attachments/3f2b8a91c0e4_test.png")
 
         self.assertIsNotNone(target)
+        assert target is not None
         self.assertEqual(target["type"], "s3_presigned")
         self.assertEqual(target["filename"], "3f2b8a91c0e4_test.png")
         self.assertIn("expires=900", target["url"])
@@ -153,6 +157,7 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         target = storage.get_attachment_download_target("legacy_unprefixed.png")
 
         self.assertIsNotNone(target)
+        assert target is not None
         self.assertEqual(target["type"], "s3_presigned")
         mock_s3.generate_presigned_url.assert_called_once_with(
             "get_object",
@@ -169,6 +174,7 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         target = storage.get_attachment_download_target("s3://old-bucket/attachments/archived.pdf")
 
         self.assertIsNotNone(target)
+        assert target is not None
         self.assertEqual(target["type"], "s3_presigned")
         mock_s3.generate_presigned_url.assert_called_once_with(
             "get_object",
@@ -189,6 +195,8 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
 
         self.assertIsNotNone(ref)
         self.assertIsNotNone(local_path)
+        assert ref is not None
+        assert local_path is not None
         self.test_files_to_clean.append(local_path)
 
         # Local storage stores filename on disk without 'attachments/' prefix
@@ -202,6 +210,7 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         target = storage.get_attachment_download_target("VPC not working.png")
 
         self.assertIsNotNone(target)
+        assert target is not None
         self.assertEqual(target["type"], "local_file")
         self.assertEqual(target["filename"], "VPC not working.png")
         self.assertTrue(os.path.exists(target["path"]))

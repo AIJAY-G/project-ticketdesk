@@ -181,7 +181,7 @@ def save_attachment(file: UploadFile) -> tuple[str | None, str | None]:
         )
 
 
-def get_attachment_download_target(attachment_ref: str) -> dict | None:
+def get_attachment_download_target(attachment_ref: str) -> dict[str, str] | None:
     """
     Resolves an attachment reference to either:
     1. An S3 pre-signed URL (15-minute expiration)

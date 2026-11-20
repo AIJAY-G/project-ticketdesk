@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse, RedirectResponse
@@ -129,7 +129,7 @@ def get_dashboard(current_user: User = Depends(get_current_user), db: Session = 
         query = query.filter(Ticket.created_by == current_user.username)
     tickets = query.all()
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     recent_cutoff = now - timedelta(hours=24)
 
     summary = {status: 0 for status in VALID_STATUSES}
