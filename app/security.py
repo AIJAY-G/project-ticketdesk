@@ -10,8 +10,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Secret key for HMAC token signing (at least 256 bits)
-# In production, this MUST be set via the SECRET_KEY or JWT_SECRET environment variable.
-_env_secret = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET")
+# In production, this MUST be set via the SECRET_KEY or JWT_SECRET_KEY environment variable.
+_env_secret = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET_KEY") or os.getenv("JWT_SECRET")
 if _env_secret and _env_secret.strip():
     SECRET_KEY = _env_secret.strip()
 else:
