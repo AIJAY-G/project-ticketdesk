@@ -72,3 +72,27 @@ output "rds_username" {
   value       = aws_db_instance.postgres.username
 }
 
+# ==============================================================================
+# Outputs: Compute (Amazon EC2 Application Server)
+# ==============================================================================
+output "ec2_instance_id" {
+  description = "The ID of the EC2 application server instance."
+  value       = aws_instance.app_server.id
+}
+
+output "ec2_public_ip" {
+  description = "The public IPv4 address assigned to the EC2 application server."
+  value       = aws_instance.app_server.public_ip
+}
+
+output "ec2_public_dns" {
+  description = "The public DNS name assigned to the EC2 application server."
+  value       = aws_instance.app_server.public_dns
+}
+
+output "ec2_private_ip" {
+  description = "The private IPv4 address assigned to the EC2 application server."
+  value       = aws_instance.app_server.private_ip
+}
+
+

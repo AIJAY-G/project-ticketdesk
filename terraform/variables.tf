@@ -114,4 +114,26 @@ variable "db_engine_version" {
   default     = "15.7"
 }
 
+# ==============================================================================
+# Compute Variables (Amazon EC2 Application Server)
+# ==============================================================================
+variable "ec2_instance_type" {
+  type        = string
+  description = "EC2 compute instance type for the TicketDesk application server (Free Tier eligible: t3.micro or t2.micro)."
+  default     = "t3.micro"
+}
+
+variable "ec2_key_name" {
+  type        = string
+  description = "Optional name of an existing EC2 Key Pair for SSH access. Defaults to null (SSM Session Manager preferred)."
+  default     = null
+}
+
+variable "ec2_root_volume_size" {
+  type        = number
+  description = "Size of the root EBS volume in gigabytes (within AWS 30 GB free tier allowance)."
+  default     = 20
+}
+
+
 

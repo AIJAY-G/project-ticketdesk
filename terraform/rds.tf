@@ -29,6 +29,7 @@ resource "aws_db_instance" "postgres" {
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = 0 # Disables storage autoscaling for PoC to prevent unexpected costs
   storage_type          = "gp3"
+  storage_encrypted     = true
 
   # Database Name & Credentials
   db_name  = var.db_name
