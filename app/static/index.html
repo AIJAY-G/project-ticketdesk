@@ -1188,7 +1188,8 @@
       applyTheme(localStorage.getItem("td_theme") || "light");
       const savedUser = localStorage.getItem("td_user");
       const savedRole = localStorage.getItem("td_role");
-      if (savedUser && savedRole) {
+      const savedToken = localStorage.getItem("td_token");
+      if (savedUser && savedRole && savedToken) {
         currentUser = savedUser;
         currentRole = savedRole;
         showApp();
@@ -1196,7 +1197,15 @@
     };
 
     function authHeaders(extra = {}) {
-      return { "X-Username": currentUser, ...extra };
+      const token = localStorage.getItem("td_token");
+      const headers = { ...extra };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (currentUser) {
+        headers["X-Username"] = currentUser;
+      }
+      return headers;
     }
 
     function showToast(msg, isError = false) {
@@ -1257,6 +1266,7 @@
     function logout() {
       localStorage.removeItem("td_user");
       localStorage.removeItem("td_role");
+      localStorage.removeItem("td_token");
       location.reload();
     }
 
@@ -1273,6 +1283,9 @@
         const data = await res.json();
         currentUser = data.username;
         currentRole = data.role;
+        if (data.access_token) {
+          localStorage.setItem("td_token", data.access_token);
+        }
         localStorage.setItem("td_user", currentUser);
         localStorage.setItem("td_role", currentRole);
         showApp();
@@ -1308,6 +1321,9 @@
         const data = await res.json();
         currentUser = data.username;
         currentRole = data.role;
+        if (data.access_token) {
+          localStorage.setItem("td_token", data.access_token);
+        }
         localStorage.setItem("td_user", currentUser);
         localStorage.setItem("td_role", currentRole);
         showApp();
@@ -1319,14 +1335,18 @@
     }
 
     async function loadData() {
-      const [dashRes, ticketsRes, usersRes] = await Promise.all([
+      const fetchUsers = (currentRole === "Admin" || currentRole === "Support Engineer")
+        ? fetch("/api/users", { headers: authHeaders() }).then(r => r.ok ? r.json() : [])
+        : Promise.resolve([]);
+
+      const [dashRes, ticketsRes, users] = await Promise.all([
         fetch("/api/dashboard", { headers: authHeaders() }),
         fetch("/api/tickets", { headers: authHeaders() }),
-        fetch("/api/users", { headers: authHeaders() })
+        fetchUsers
       ]);
       const dash = await dashRes.json();
       allTickets = await ticketsRes.json();
-      allUsers = await usersRes.json();
+      allUsers = users;
 
       const activeStatus = document.getElementById("statusFilter").value;
       document.getElementById("dashboardStatus").innerHTML = Object.entries(dash.status_counts)

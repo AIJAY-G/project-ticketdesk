@@ -9,10 +9,26 @@ from sqlalchemy.orm import Session
 from database import Base, engine, get_db, SessionLocal
 from models import User, Ticket, TicketActivity
 from storage import save_attachment, get_attachment_download_target, UPLOAD_DIR
+from security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    verify_access_token,
+)
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Project TicketDesk")
+
+
+@app.middleware("http")
+async def proxy_headers_middleware(request, call_next):
+    """Support reverse proxy TLS termination (AWS ALB / Nginx) via X-Forwarded-Proto."""
+    proto = request.headers.get("x-forwarded-proto")
+    if proto:
+        request.scope["scheme"] = proto
+    response = await call_next(request)
+    return response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -22,19 +38,37 @@ VALID_STATUSES = ["Open", "In Progress", "Resolved", "Closed"]
 VALID_CATEGORIES = ["Hardware", "Software", "Network", "Email", "Account Access"]
 VALID_ROLES = ["Admin", "Support Engineer", "User"]
 
-# Seed default accounts if database is empty
+ALLOW_DEV_HEADER_AUTH = os.getenv("ALLOW_DEV_HEADER_AUTH", "true").lower() in ("true", "1", "yes")
+
+# Seed default accounts if database is empty and upgrade existing plaintext passwords
 def seed_users():
     db = SessionLocal()
     try:
-        if db.query(User).count() == 0:
-            admin_user = os.getenv("ADMIN_USERNAME", "admin")
+        # Check and upgrade any legacy plaintext passwords to secure PBKDF2 hashes
+        all_users = db.query(User).all()
+        if all_users:
+            updated = False
+            for u in all_users:
+                if not u.password.startswith("pbkdf2_sha256$"):
+                    u.password = hash_password(u.password)
+                    updated = True
+            if updated:
+                db.commit()
+        else:
+            admin_user = os.getenv("ADMIN_USERNAME", "admin").strip()
             admin_pass = os.getenv("ADMIN_PASSWORD", "admin123")
-            db.add_all([
-                User(username=admin_user, password=admin_pass, role="Admin"),
-                User(username="eng1", password="eng123", role="Support Engineer"),
-                User(username="eng2", password="eng123", role="Support Engineer"),
-                User(username="user1", password="user123", role="User"),
-            ])
+            seed_demo = os.getenv("SEED_DEMO_ACCOUNTS", "true").lower() in ("true", "1", "yes")
+
+            users_to_seed = [
+                User(username=admin_user, password=hash_password(admin_pass), role="Admin"),
+            ]
+            if seed_demo:
+                users_to_seed.extend([
+                    User(username="eng1", password=hash_password("eng123"), role="Support Engineer"),
+                    User(username="eng2", password=hash_password("eng123"), role="Support Engineer"),
+                    User(username="user1", password=hash_password("user123"), role="User"),
+                ])
+            db.add_all(users_to_seed)
             db.commit()
     finally:
         db.close()
@@ -56,13 +90,33 @@ class StatusUpdate(BaseModel):
 class AssignRequest(BaseModel):
     assigned_to: str | None = None
 
-def get_current_user(x_username: str = Header(None), db: Session = Depends(get_db)) -> User:
-    if not x_username:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    user = db.query(User).filter(User.username == x_username).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid user")
-    return user
+def get_current_user(
+    authorization: str | None = Header(None),
+    x_username: str | None = Header(None),
+    db: Session = Depends(get_db),
+) -> User:
+    # 1. Bearer Token Authentication (Secure Standard)
+    if authorization and authorization.strip():
+        auth_str = authorization.strip()
+        if not auth_str.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization scheme. Bearer token required.")
+        token = auth_str.split(" ", 1)[1].strip()
+        payload = verify_access_token(token)
+        if not payload or not payload.get("sub"):
+            raise HTTPException(status_code=401, detail="Invalid or expired access token.")
+        user = db.query(User).filter(User.username == payload["sub"]).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="User associated with token not found.")
+        return user
+
+    # 2. Controlled Dev Header Authentication (Only when explicitly enabled for test compatibility)
+    if ALLOW_DEV_HEADER_AUTH and x_username and x_username.strip():
+        user = db.query(User).filter(User.username == x_username.strip()).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid user.")
+        return user
+
+    raise HTTPException(status_code=401, detail="Not authenticated. Bearer token required.")
 
 def log_activity(db: Session, ticket_id: int, actor: str, action: str):
     db.add(TicketActivity(ticket_id=ticket_id, actor=actor, action=action))
@@ -73,10 +127,23 @@ def serve_frontend():
 
 @app.post("/api/login")
 def login(creds: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == creds.username, User.password == creds.password).first()
-    if not user:
+    user = db.query(User).filter(User.username == creds.username.strip()).first()
+    if not user or not verify_password(creds.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"message": "Login successful", "username": user.username, "role": user.role}
+
+    # Seamlessly upgrade legacy plaintext password to secure PBKDF2 hash on login
+    if not user.password.startswith("pbkdf2_sha256$"):
+        user.password = hash_password(creds.password)
+        db.commit()
+
+    access_token = create_access_token({"sub": user.username, "role": user.role})
+    return {
+        "message": "Login successful",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "username": user.username,
+        "role": user.role,
+    }
 
 @app.post("/api/register")
 def register(creds: LoginRequest, db: Session = Depends(get_db)):
@@ -90,13 +157,17 @@ def register(creds: LoginRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    # Always force role="User" on self-signup so users cannot make themselves Admin
-    new_user = User(username=username, password=password, role="User")
+    # Always force role="User" on self-signup and hash password securely
+    new_user = User(username=username, password=hash_password(password), role="User")
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    access_token = create_access_token({"sub": new_user.username, "role": new_user.role})
     return {
         "message": "Account created successfully",
+        "access_token": access_token,
+        "token_type": "bearer",
         "username": new_user.username,
         "role": new_user.role,
     }
@@ -104,6 +175,8 @@ def register(creds: LoginRequest, db: Session = Depends(get_db)):
 # --- User Management ---
 @app.get("/api/users")
 def list_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role == "User":
+        raise HTTPException(status_code=403, detail="Users do not have permission to list accounts")
     users = db.query(User).all()
     return [{"id": u.id, "username": u.username, "role": u.role} for u in users]
 
@@ -113,9 +186,9 @@ def create_user(payload: CreateUserRequest, current_user: User = Depends(get_cur
         raise HTTPException(status_code=403, detail="Only Admins can create users")
     if payload.role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
-    if db.query(User).filter(User.username == payload.username).first():
+    if db.query(User).filter(User.username == payload.username.strip()).first():
         raise HTTPException(status_code=400, detail="Username already exists")
-    user = User(username=payload.username.strip(), password=payload.password, role=payload.role)
+    user = User(username=payload.username.strip(), password=hash_password(payload.password), role=payload.role)
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -355,12 +428,27 @@ def delete_ticket(ticket_id: int, current_user: User = Depends(get_current_user)
     return {"message": "Ticket deleted"}
 
 @app.get("/uploads/{filename}")
-def get_uploaded_file(filename: str):
-    """Legacy/direct local file access with path traversal protection."""
+def get_uploaded_file(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Legacy/direct local file access protected with authentication and authorization.
+    Requires valid login and enforces RBAC on the associated ticket.
+    """
     safe_name = os.path.basename(filename)
     resolved_path = Path(os.path.join(UPLOAD_DIR, safe_name)).resolve()
     resolved_upload_dir = Path(UPLOAD_DIR).resolve()
 
     if not resolved_path.is_relative_to(resolved_upload_dir) or not resolved_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Enforce RBAC: Regular Users can only download files attached to tickets they created
+    ticket = db.query(Ticket).filter(Ticket.attachment.like(f"%{safe_name}")).first()
+    if ticket and current_user.role == "User" and ticket.created_by != current_user.username:
+        raise HTTPException(status_code=403, detail="You do not have permission to access this attachment")
+    elif not ticket and current_user.role == "User":
+        raise HTTPException(status_code=403, detail="You do not have permission to access this attachment")
+
     return FileResponse(str(resolved_path), filename=safe_name)

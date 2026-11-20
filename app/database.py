@@ -31,8 +31,14 @@ if DATABASE_URL.startswith("sqlite"):
     )
 else:
     # PostgreSQL configuration optimized for Amazon RDS POC
+    # Enforce SSL encryption for RDS connections unless explicitly disabled
+    connect_args = {}
+    if "sslmode" not in DATABASE_URL.lower():
+        connect_args["sslmode"] = "require"
+
     engine = create_engine(
         DATABASE_URL,
+        connect_args=connect_args,
         pool_pre_ping=True,   # Tests connection liveness before checkout to prevent stale connection errors
         pool_size=5,          # Baseline pool of persistent connections for the POC
         max_overflow=10,      # Additional temporary connections during load spikes
