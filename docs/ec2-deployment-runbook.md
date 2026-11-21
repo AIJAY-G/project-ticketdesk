@@ -8,26 +8,34 @@
 
 ---
 
-## 1. Architecture Overview
+## 1. Architecture Overview (SSM-Only Private Access)
 
 ```
-                      [ Public Internet ]
-                               │
-                               │ HTTP (Port 80)
-                               ▼
-        ┌─────────────────────────────────────────────────┐
-        │  Amazon EC2 Application Server (AL2023)         │
-        │                                                 │
-        │   ┌─────────────────────────────────────────┐   │
-        │   │ Nginx Reverse Proxy (Port 80)           │   │
-        │   └────────────────────┬────────────────────┘   │
-        │                        │ (127.0.0.1:8000)       │
-        │                        ▼                        │
-        │   ┌─────────────────────────────────────────┐   │
-        │   │ systemd: ticketdesk.service             │   │
-        │   │ (Uvicorn / FastAPI, non-root user)      │   │
-        │   └───────────────┬─────────────────┬───────┘   │
-        └───────────────────┼─────────────────┼───────────┘
+        [ Local Administrator / User Workstation ]
+                         │
+          Local Browser  │ http://localhost:8080
+                         ▼
+          [ AWS CLI: SSM Port-Forwarding Session ]
+          (Authenticated, TLS-Encrypted WebSocket Tunnel via AWS SSM)
+                         │
+                         ▼ (Outbound HTTPS 443 to Regional SSM Endpoints)
+        ┌─────────────────────────────────────────────────────────┐
+        │  Amazon EC2 Application Server (AL2023)                 │
+        │  (Zero Public Inbound Ports in Security Group)          │
+        │                                                         │
+        │   amazon-ssm-agent (Local Loopback Forwarding)          │
+        │         │ (127.0.0.1:80)                                │
+        │         ▼                                               │
+        │   ┌─────────────────────────────────────────┐           │
+        │   │ Nginx Reverse Proxy (Port 80)           │           │
+        │   └────────────────────┬────────────────────┘           │
+        │                        │ (127.0.0.1:8000)               │
+        │                        ▼                                │
+        │   ┌─────────────────────────────────────────┐           │
+        │   │ systemd: ticketdesk.service             │           │
+        │   │ (Uvicorn / FastAPI, non-root user)      │           │
+        │   └───────────────┬─────────────────┬───────┘           │
+        └───────────────────┼─────────────────┼───────────────────┘
                             │                 │
              PostgreSQL 5432│                 │ PutObject / GetObject
              (Encrypted SSL)│                 │ (IAM Instance Profile)
@@ -46,9 +54,11 @@
 ```
 
 ### Security & Isolation Principles
-- **No Direct Port 8000 Public Ingress**: Uvicorn binds strictly to `127.0.0.1:8000`. Only Nginx accepts inbound traffic on public port 80.
-- **Zero Static AWS Credentials**: The EC2 application server assumes an IAM Role (`aws_iam_instance_profile.ec2`) to interact with S3. No AWS access keys are stored on disk.
-- **No Open SSH Port**: Administrative access is performed exclusively through **AWS Systems Manager (SSM) Session Manager**, avoiding port 22 exposure and SSH key management.
+- **Zero Public Inbound Ports**: Public inbound HTTP (port 80) and port 8000 have been completely removed from the EC2 security group. The EC2 instance accepts **zero** inbound connections directly from the public internet.
+- **End-to-End Encrypted Tunnel via AWS SSM**: Browser access is established through **AWS Systems Manager (SSM) Session Manager port forwarding** (`localhost:8080 -> EC2 localhost:80`). All traffic crossing the public internet is encapsulated in authenticated, TLS-encrypted AWS SSM tunnels, preventing cleartext password/token interception.
+- **No Direct Port 8000 Access**: Uvicorn binds strictly to `127.0.0.1:8000`. Only Nginx forwards local loopback requests to Uvicorn.
+- **Zero Static AWS Credentials**: The EC2 application server assumes an IAM Role (`aws_iam_instance_profile.ec2`) to interact with S3 and SSM. No AWS access keys are stored on disk.
+- **No Open SSH Port**: Administrative terminal access is performed exclusively through **AWS Systems Manager (SSM) Session Manager**, avoiding port 22 exposure and SSH key management.
 - **Dedicated Non-Root User**: Application executes under user `ticketdesk` with limited filesystem privileges and systemd sandboxing (`ProtectSystem=full`, `PrivateTmp=true`, `NoNewPrivileges=true`).
 
 ---
@@ -198,13 +208,24 @@ content-type: application/json
 {"status":"healthy","service":"ticketdesk"}
 ```
 
-### Check 3: External Browser Verification
-Open your browser and navigate to:
+### Check 3: Private Browser Verification via SSM Port Forwarding
+Establish a secure, encrypted port-forwarding session from your local workstation to the EC2 instance without opening any public firewall ports:
+
+```bash
+aws ssm start-session \
+    --target <ec2_instance_id> \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters '{"portNumber":["80"],"localPortNumber":["8080"]}' \
+    --region ap-south-1
 ```
-http://<ec2_public_ip>/
+
+Once the session outputs `Waiting for connections...`, open your local browser and navigate to:
 ```
-- The TicketDesk single-page application UI loads.
+http://localhost:8080/
+```
+- The TicketDesk single-page application UI loads securely over the local loopback tunnel.
 - Log in using `admin` and your configured `ADMIN_PASSWORD`.
+- Passwords and Bearer tokens are encapsulated within AWS SSM's TLS-encrypted channel over the internet.
 - Create a test ticket and upload a supported attachment (`.png`, `.pdf`, `.log`).
 - Confirm attachment upload succeeds and download link functions.
 

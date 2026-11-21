@@ -42,13 +42,13 @@ variable "availability_zones" {
 
 variable "http_port" {
   type        = number
-  description = "Standard HTTP port for public web traffic."
+  description = "Internal HTTP port on which Nginx listens (destination for SSM port forwarding)."
   default     = 80
 }
 
 variable "app_port" {
   type        = number
-  description = "Port on which the FastAPI application runs (uvicorn)."
+  description = "Port on which the FastAPI application runs on loopback (uvicorn 127.0.0.1:8000)."
   default     = 8000
 }
 
