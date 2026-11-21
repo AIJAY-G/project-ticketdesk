@@ -233,4 +233,4 @@ When deploying to AWS in a future phase:
    ```bash
    terraform destroy -auto-approve
    ```
-   * S3 bucket has `force_destroy = true` enabled in Terraform to cleanly remove POC objects during teardown.
+   * S3 bucket has `force_destroy = false` enabled for data safety; empty the bucket before teardown if deletion is required.

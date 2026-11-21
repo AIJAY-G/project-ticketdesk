@@ -3,7 +3,7 @@
 # ==============================================================================
 resource "aws_s3_bucket" "attachments" {
   bucket_prefix = "${var.project_name}-${var.environment}-attachments-"
-  force_destroy = true
+  force_destroy = false
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-attachments"
