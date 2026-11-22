@@ -4,6 +4,7 @@ import uuid
 import shutil
 import logging
 from pathlib import Path
+from urllib.parse import quote
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import UploadFile, HTTPException
@@ -203,14 +204,19 @@ def get_attachment_download_target(attachment_ref: str) -> dict[str, str] | None
         parts = ref[5:].split("/", 1)
         if len(parts) == 2:
             bucket, key = parts[0], parts[1]
+            filename = os.path.basename(key)
             try:
                 s3 = get_s3_client()
                 url = s3.generate_presigned_url(
                     "get_object",
-                    Params={"Bucket": bucket, "Key": key},
+                    Params={
+                        "Bucket": bucket,
+                        "Key": key,
+                        "ResponseContentDisposition": _attachment_content_disposition(filename),
+                    },
                     ExpiresIn=PRESIGNED_URL_EXPIRATION,
                 )
-                return {"type": "s3_presigned", "url": url, "filename": os.path.basename(key)}
+                return {"type": "s3_presigned", "url": url, "filename": filename}
             except Exception as e:
                 logger.error("Failed to generate presigned URL for legacy S3 URI %s: %s", ref, e)
                 raise HTTPException(status_code=500, detail="Failed to generate secure download link.")
@@ -222,7 +228,11 @@ def get_attachment_download_target(attachment_ref: str) -> dict[str, str] | None
             s3 = get_s3_client()
             url = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": ref},
+                Params={
+                    "Bucket": bucket,
+                    "Key": ref,
+                    "ResponseContentDisposition": _attachment_content_disposition(os.path.basename(ref)),
+                },
                 ExpiresIn=PRESIGNED_URL_EXPIRATION,
             )
             return {"type": "s3_presigned", "url": url, "filename": os.path.basename(ref)}
@@ -253,7 +263,11 @@ def get_attachment_download_target(attachment_ref: str) -> dict[str, str] | None
             s3 = get_s3_client()
             url = s3.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": bucket, "Key": s3_key},
+                Params={
+                    "Bucket": bucket,
+                    "Key": s3_key,
+                    "ResponseContentDisposition": _attachment_content_disposition(os.path.basename(s3_key)),
+                },
                 ExpiresIn=PRESIGNED_URL_EXPIRATION,
             )
             return {"type": "s3_presigned", "url": url, "filename": os.path.basename(s3_key)}
@@ -261,3 +275,12 @@ def get_attachment_download_target(attachment_ref: str) -> dict[str, str] | None
             logger.error("Failed to generate presigned URL for fallback S3 key %s: %s", s3_key, e)
 
     return None
+
+
+def _attachment_content_disposition(filename: str) -> str:
+    filename = os.path.basename(filename).replace("\r", "").replace("\n", "")
+    ascii_filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename.encode("ascii", "ignore").decode("ascii"))
+    if not ascii_filename:
+        ascii_filename = "attachment"
+    encoded_filename = quote(filename, safe="")
+    return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
