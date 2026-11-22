@@ -142,7 +142,14 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
 
         mock_s3.generate_presigned_url.assert_called_once_with(
             "get_object",
-            Params={"Bucket": "ticketdesk-poc-attachments", "Key": "attachments/3f2b8a91c0e4_test.png"},
+            Params={
+                "Bucket": "ticketdesk-poc-attachments",
+                "Key": "attachments/3f2b8a91c0e4_test.png",
+                "ResponseContentDisposition": (
+                    'attachment; filename="3f2b8a91c0e4_test.png"; '
+                    "filename*=UTF-8''3f2b8a91c0e4_test.png"
+                ),
+            },
             ExpiresIn=900,
         )
 
@@ -161,7 +168,14 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         self.assertEqual(target["type"], "s3_presigned")
         mock_s3.generate_presigned_url.assert_called_once_with(
             "get_object",
-            Params={"Bucket": "ticketdesk-poc-attachments", "Key": "attachments/legacy_unprefixed.png"},
+            Params={
+                "Bucket": "ticketdesk-poc-attachments",
+                "Key": "attachments/legacy_unprefixed.png",
+                "ResponseContentDisposition": (
+                    'attachment; filename="legacy_unprefixed.png"; '
+                    "filename*=UTF-8''legacy_unprefixed.png"
+                ),
+            },
             ExpiresIn=900,
         )
 
@@ -178,7 +192,13 @@ class TestAttachmentPrefixAndStorage(unittest.TestCase):
         self.assertEqual(target["type"], "s3_presigned")
         mock_s3.generate_presigned_url.assert_called_once_with(
             "get_object",
-            Params={"Bucket": "old-bucket", "Key": "attachments/archived.pdf"},
+            Params={
+                "Bucket": "old-bucket",
+                "Key": "attachments/archived.pdf",
+                "ResponseContentDisposition": (
+                    'attachment; filename="archived.pdf"; filename*=UTF-8\'\'archived.pdf'
+                ),
+            },
             ExpiresIn=900,
         )
 

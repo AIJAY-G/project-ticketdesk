@@ -1521,41 +1521,80 @@
       name = name.replace(/^[a-f0-9]{8,16}_/, "");
       return name || "attachment";
     }
-
     async function downloadAttachment(ticketId, fallbackFilename = "attachment") {
       try {
         showToast("Fetching attachment...");
-        const res = await fetch(`/api/tickets/${ticketId}/attachment`, {
+
+        const res = await fetch(`/api/tickets/${ticketId}/attachment?redirect=false`, {
           headers: authHeaders()
         });
+
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: "Attachment is unavailable" }));
+          const err = await res.json().catch(() => ({
+            detail: "Attachment is unavailable"
+          }));
+
           showToast(err.detail || "Attachment download failed", true);
           return;
         }
 
+        const contentType = res.headers.get("Content-Type") || "";
+
+        // Handle S3 attachments using a presigned URL
+        if (contentType.includes("application/json")) {
+          const data = await res.json();
+
+          if (!data.download_url) {
+            showToast("Download URL unavailable", true);
+            return;
+          }
+
+          const a = document.createElement("a");
+          a.href = data.download_url;
+          a.download = data.filename || fallbackFilename;
+          a.style.display = "none";
+
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          showToast("Download started");
+          return;
+        }
+
+        // Handle local attachments using the existing blob approach
         const blob = await res.blob();
         const disposition = res.headers.get("Content-Disposition");
+
         let filename = fallbackFilename;
+
         if (disposition && disposition.includes("filename=")) {
           const match = disposition.match(/filename=["']?([^"';]+)["']?/);
-          if (match && match[1]) filename = match[1].trim();
+
+          if (match && match[1]) {
+            filename = match[1].trim();
+          }
         }
 
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
+
         a.href = blobUrl;
         a.download = filename;
+
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+
         window.URL.revokeObjectURL(blobUrl);
+
         showToast("Download started");
+
       } catch (err) {
         showToast("Download error: " + err.message, true);
       }
     }
-
+    
     async function viewDetails(id) {
       const res = await fetch(`/api/tickets/${id}`, { headers: authHeaders() });
       const t = await res.json();
